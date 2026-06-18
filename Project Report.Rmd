@@ -1,0 +1,453 @@
+---
+title: "Research Project Report"
+author: "Marzhan Adylbayeva, ma8447"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(haven)
+library(stargazer)
+library(dplyr)
+library(ggplot2)
+library(DescTools)
+library(knitr)
+
+data <- read_dta("IAPR7EFL.DTA",
+                 col_select = c(
+                   "hc57", "hv219", "hv217", "hv226", "hv271", "hv228", "hv025", "hc61", "hv040", "hv014", "hc1", "hv246", "hv024", "hv230b", "hv232", "hv220"))
+
+data <- data %>% 
+  rename(anaemia_lev_child = hc57,      
+         household_gend = hv219,
+         adults = hv217,
+         cooking_fuel = hv226,
+         wealth_index = hv271,
+         net_sleeping = hv228,
+         residence = hv025,
+         mother_edu = hc61, 
+         altitude = hv040,
+         children5 = hv014,
+         children_age = hc1,
+         livestock = hv246, 
+         state = hv024, 
+         water = hv230b,
+         soap = hv232,
+         hh_age = hv220)
+```
+
+# Literature Review 
+
+Anaemia is a blood condition under which a person has lower than normal number of the red blood cells, or lower than normal concentration of the haemoglobin responsible for oxygen transport to organ and tissues. It is a significant public health issue with the World Health Organization estimating that 40% of all children around the globe aged 6–59 months are affected by anaemia, most of them located in Africa and South-East Asia.
+
+Recent research that was carried out by using the 2019 Ghana Malaria Indicator Survey (GMIS) showed that the development of childhood anaemia is affected by the socioeconomic and household-level conditions. They shape children’s nutrition, exposure to environmental risks and access to care. The study found that children living in male-headed households had significantly higher odds of being anaemic than those in female-headed households. It also reported that children from poorer households and households relying on solid fuels such as wood or charcoal were more likely to be anaemic, highlighting the importance of household structure and living conditions in determining child health outcomes.
+
+The dataset sourced from the survey of the Demographic and Health Survey (DHS) conducted in India in 2019-2021 was used for the purpose of this research project and report to identify whether similar household-level variables, in particular the household head gender, influence childhood anaemia in India, where comparable household and socioeconomic disparities exist. 
+
+# Research Question & Hypotheses
+
+The research question is: "How does the gender of the household head in India influence the likelihood of children having anaemia within the household?"
+
+Therefore, the Hypotheses are the next: 
+
+*Null Hypothesis:* There is no statistically significant relationship between the housheold head gender and the presence of anaemia in children under 5 in that household. $$H_0: \beta_1 = 0$$
+
+*Alternative Hypothesis:* There is statistically significant relationship between the housheold head gender and the presence of anaemia in children under 5 in that household. $$H_a: \beta_1 \not= 0$$
+
+# Main Specification 
+
+## Data Cleaning 
+
+As stated before, the Demographic and Health Survey (DHS) conducted in India in 2019-2021 was used for the purposes of this study. It includes 530 variables and 2,843,917 observations in total.
+
+After the inspection of the dataset, the following 16 necessary variables were chosen: 
+
+* Anaemia level in children in the household (hc57) - the dependent variable. It was re-coded into binary variable to be suitable for logistic regression used further. A child is coded as 1 = anaemic if the DHS anaemia severity variable indicated mild or moderate anaemia and 0 = not anaemic otherwise. 
+```{r, echo=FALSE}
+data_clean <- data
+
+data_clean$anaemia_lev_child <- as.factor(data_clean$anaemia_lev_child)
+data_clean <- data_clean %>% mutate(anaemia = case_when(
+  anaemia_lev_child %in% c(1,2) ~ 1,
+  anaemia_lev_child %in% c(3,4) ~ 0,
+  TRUE ~ NA_real_),
+  anaemia = as.factor(anaemia))
+```
+
+* Household head gender (hv219) - the independent variable. This is a variable that indicates if the household is headed by a male (1) or female (2). The third existing category, which corresponded to the transgender household head, was first named as "NA" and then dropped because it contained too few observations to support reliable statistical analysis. 
+```{r, echo=FALSE, fig.width=3, fig.height=2, fig.align="center"}
+kable(
+  table(data_clean$household_gend),
+  align = "c",
+  caption = "Household Head Gender Distribution"
+)
+
+data_clean$household_gend[!data_clean$household_gend %in% c(1,2)] <- NA
+```
+
+* The number of adults in the household (hv217) - the control variable that was included to account for the caregiving capacity and labour availability in the household. Household with more adults may provide better supervision and secure more stable income, better food as well as be more healthcare-seeking. This all can reduce the likelihood of child's development of anaemia. 
+* Type of cooking fuel used (hv226) - the control variable because prior research on Ghana showed that exposure to smoke from polluting solid fuels increases risk of children having anaemia as it contans high concentrations of carbon monoxide. When inhaled, carbon monoxide binds to haemoglobin instead of oxygen and impairs delivery of oxygen to the tissues, causing anaemia. Because the original variable contains many specific fuel types, it was recoded into a smaller set of meaningful categories: 1 = Clean fuels (electricity, LPG, natural gas, biogas), 2 = Polluting/solid fuels (kerosene, coal/lignite, charcoal, wood, straw/shrubs/grass, agricultural crop, animal dung) and 0 = No cooking in household.
+```{r, include = FALSE}
+data_clean <- data_clean[data_clean$cooking_fuel !=96, ]
+data_clean$cooking_fuel <- as.factor(data_clean$cooking_fuel)
+data_clean <- data_clean %>% mutate(cooking = case_when(
+  cooking_fuel %in% c(1,2, 3, 4) ~ 1,
+  cooking_fuel %in% c(5, 6, 7, 8, 9, 10, 11) ~ 2,
+  cooking_fuel == 95 ~0), 
+  cooking = as.factor(cooking))
+```
+
+* Wealth index (hv271) - the control variable used as possible proxy for the level of nutrition and overall living standards. Wealthier households are more likely to afford diverse diets, higher-quality foods and healthcare services, all of which reduce the risk of childhood anaemia. In the data cleaning process, it was normalized to a 0–1 scale to improve interpretability and comparability across households.
+```{r, include=FALSE}
+data_clean <- data_clean %>%
+  mutate(
+    wealth_index_scaled = (wealth_index - min(wealth_index, na.rm = TRUE)) /
+                   (max(wealth_index, na.rm = TRUE) - min(wealth_index, na.rm = TRUE))
+  )
+```
+
+* Children under 5 slept under mosquito bed net (hv228) - the control variable used since malaria is a major cause of anaemia. Sleeping under a net reduces malaria transmission by preventing mosquito bites. This lowers the risk of malaria-induced destruction of red blood cells, therefore, anaemia. For the purpose of modelling potential exposure to mosquito-borne infections, the detailed categories were grouped into a binary  capturing whether any child slept under a net: 1 = Net use ("All children" and "Some children") and 0 = No net use ("No" and "No net in household"). 
+```{r, include = FALSE}
+data_clean$net_sleeping <- as.factor(data_clean$net_sleeping)
+data_clean <- data_clean %>% mutate(net = case_when(
+  net_sleeping %in% c(0,3) ~ 0,
+  net_sleeping %in% c(1,2) ~ 1,
+  TRUE ~ NA_real_),
+  net = as.factor(net))
+```
+
+* Mother's highest educational level (hc61) - the control variable used as higher maternal education is usually associated with improved nutrition knowledge, better hygiene practices and greater use of healthcare services. Therefore, higher education obtained by mother may reduce the possibility of anaemia in her children. Missing observations were dropped. 
+```{r, include = FALSE}
+data_clean <- data_clean[data_clean$mother_edu !=8, ]
+```
+
+* Cluster altitude in meters (hv040) - the control variable used as haemoglobin levels naturally rise at higher altitudes due to lower oxygen availability. Controlling for altitude prevents misclassification of children as anaemic when their haematological responses are normal for their environment. 
+* The number of children under 5 in the household (hv014) - the control variable used as households with many young children may experience resource dilution (less food, attention and healthcare per child). As a result, each kid's vulnerability to anaemia is increased. During the data cleaning, it was checked for plausability since having up to five young children is possible, but higher counts would be unrealistic in households with only one or two adults. After examining the data provided, After inspecting the data, the values for the number of children under age five were found to be reasonable. However, the households without children under 5 were dropped as the research question focuses on specifically on anaemia among young children. Hence, including households without eligible children would not contribute relevant information to the analysis. Missing observations were dropped.
+```{r, include=FALSE}
+data_clean <- data_clean[data_clean$children5 !=0, ]
+```
+
+```{r, echo=FALSE, fig.width=5, fig.height=2, fig.align="center"}
+ggplot(data, aes(x = adults > 2, y = children5)) +
+  geom_point() +
+  labs(
+    x = "Adults > 2",
+    y = "# of children (age < 5)",
+    title = "Original Dataset Data"
+  )
+```
+
+* Children’s age in months (hc1) - the control variable because anaemia risk varies by age. The highest risk is infants and toddlers (till 35 months) as they require iron for faster growth and development. 
+* Whether the household owns livestock (herds or farm animals) or not (hv246) - the control variable used as proxy for dietary access to animal-source foods (rich in iron) and rural livelihood conditions.
+* Type of place of residence (hv025) and State (hv024) - the control variables used as a geographical control. India having a large territory vastly differs in health infrastructure, socioeconomic conditions and disease environments. In the original dataset, State variable contains 36 categories which would excessively increase the number of dummy variables. To create a more interpretable and statistically efficient measure of geography, states were grouped into broader regional categories: *North*: Jammu & Kashmir, Himachal Pradesh, Punjab, Chandigarh, Uttarakhand, Haryana, Nct Of Delhi and Ladakh; *Central*: Uttar Pradesh, Chhattisgarh and Madhya Pradesh; *East*: Bihar, West Bengal, Jharkhand, Odisha; *Northeast*: Sikkim, Arunachal Pradesh, Nagaland, Manipur, Mizoram, Tripura, Meghalaya and Assam; *West*: Rajasthan, Gujarat, Dadra & Nagar Haveli And Daman & Diu, Maharashtra and Goa; *South*: Andhra Pradesh, Karnataka, Kerala, Tamil Nadu, Puducherry and Telangana; *Island Territories*: Lakshadweep, Andaman & Nicobar Islands. 
+```{r, include=FALSE}
+data_clean$state <- as.factor(data_clean$state)
+data_clean <- data_clean %>% 
+  mutate(state_group = case_when(
+    state %in% c(1, 2, 4, 5, 6, 7, 37) ~ "North",        
+    state %in% c(9, 22, 23) ~ "Central",       
+    state %in% c(10, 19, 20, 21) ~ "East",   
+    state %in% c(11, 12, 13, 14, 15, 16, 17, 18) ~ "Northeast",
+    state %in% c(8, 24, 25, 27, 30) ~ "West",          
+    state %in% c(28, 29, 32, 33, 34, 36) ~ "South",
+    state %in% c(31, 35) ~ "Island Territories",
+    TRUE ~ NA_character_
+  ))
+```
+
+* Items present: Soap or detergent (hv232) and Presence of water at hand washing place (hv230b) - the control variables used as proxy of health because reliable access to water and soap improves hygiene and decreases the chance of having infections. Missing observations were dropped. 
+```{r, include = FALSE}
+data_clean <- data_clean[data_clean$water !=9, ]
+data_clean <- data_clean[data_clean$soap !=9, ]
+```
+
+* Age of head of household (hv220) - the control variable. The research on Ghana assumed that since older heads have more experience with childcare and are likely to take better care of children than younger heads, the households with older heads have less anaemic children.  
+
+All rows containing "NA"s and original variables (that were modified in the process) were dropped. 
+```{r, include = FALSE}
+data_clean$anaemia_lev_child <- NULL
+data_clean$cooking_fuel <- NULL
+data_clean$net_sleeping <- NULL
+data_clean$help_where <- NULL
+data_clean$state <- NULL
+data_clean$wealth_index <- NULL
+
+data_clean_missing_dropped <- data_clean %>% drop_na()
+```
+
+The final dataset consists of 168,175 observations of 16 variables and is called "data_clean_missing_dropped". 
+
+```{r, include = FALSE}
+anyNA(data_clean_missing_dropped)
+```
+
+## Descriptive Statistics
+
+```{r, echo=FALSE, fig.width=5, fig.height=2, fig.align="center"}
+data_clean_missing_dropped %>%
+ggplot(aes(x = anaemia)) +
+geom_bar(fill = "pink") +
+labs(
+title = "Distribution of Childhood anaemia",
+x = "anaemia Status (1 = Anemic, 0 = Not Anemic)",
+y = "Count"
+) +
+theme_minimal()
+```
+
+The bar chart displays that in the created dataset a larger share of children are classified as non-anaemic, although a substantial number still fall into the anameic category. 
+
+```{r, echo=FALSE, fig.width=5, fig.height=2, fig.align="center"}
+data_clean_missing_dropped %>%
+  ggplot(aes(x = factor(household_gend, 
+                        levels = c(1, 2),
+                        labels = c("Male-headed Household", 
+                                   "Female-headed Household")))) +
+    geom_bar(fill = "lightblue") +
+    labs(
+      title = "Distribution of Household Head Gender",
+      x = "Household Head Gender",
+      y = "Count"
+    ) +
+    theme_minimal()
+```
+
+The bar chart shows that most households in the final cleaned dataset are male-headed. This demonstrates imbalance that is prevalent in India. 
+
+```{r, echo=FALSE, fig.width=7.5, fig.height=3}
+data_clean_missing_dropped %>%
+  ggplot(aes(x = state_group, fill = net)) +
+    geom_bar(position = "fill") +
+    scale_y_continuous(labels = scales::percent_format()) +
+    scale_fill_manual(
+      values = c("0" = "royalblue",   
+                 "1" = "orchid1"), 
+      labels = c("0" = "No", "1" = "Yes")
+    ) +
+    labs(
+      title = "Net Usage by State Group",
+      x = "State Group",
+      y = "Proportion",
+      fill = "Net Use"
+    ) +
+    theme_minimal()
+```
+The stacked bar chart illustrates substantial variation in mosquito use across state groups. People living in the Northeastern and Eastern states have the highest proportions of children sleeping under a mosquito net, whereas Northern and Western inhabitants exhibit very low usage rates. 
+
+\newpage
+
+## Regression Results
+```{r, include=FALSE}
+data_clean_missing_dropped$state_group <- as.factor(data_clean_missing_dropped$state_group)
+data_clean_missing_dropped$residence <- as.factor(data_clean_missing_dropped$residence)
+data_clean_missing_dropped$household_gend <- as.factor(data_clean_missing_dropped$household_gend)
+data_clean_missing_dropped$water <- as.factor(data_clean_missing_dropped$water)
+data_clean_missing_dropped$soap <- as.factor(data_clean_missing_dropped$soap)
+data_clean_missing_dropped$livestock <- as.factor(data_clean_missing_dropped$livestock)
+data_clean_missing_dropped$mother_edu <- as.factor(data_clean_missing_dropped$mother_edu)
+```
+
+```{r  results = 'asis', echo = FALSE}
+mod1 <- glm(anaemia ~ household_gend,
+            data = data_clean_missing_dropped,
+            family = binomial(link="logit"))
+
+stargazer(mod1,
+          type = "latex",
+          header = FALSE,
+          digits = 3)
+```
+```{r echo=FALSE, fig.pos='H'}
+mod2 <- glm(anaemia ~ household_gend + adults + children5 + children_age + wealth_index_scaled + residence + mother_edu + cooking + water + soap + livestock + net + altitude + state_group + hh_age,
+            data = data_clean_missing_dropped,
+            family = binomial(link="logit"))
+```
+
+```{r results = 'asis', include = FALSE}
+PseudoR2(mod1)
+PseudoR2(mod2)
+```
+
+The baseline regression involved regressing Household Head Gender on Anaemia level in children under 5 in the household to analyze how these variables relate. 
+
+**Table 2** shows that being present in male-headed households decreases the odds of childhood anaemia by `r round(1-exp(coef(mod1)[("Intercept")]), 3)`, according to the intercept coefficient. In comparison, children living in female-headed households have a significantly lower likelihood of being anaemic. More specifically, the coefficient on household_gend2, which is equal to `r round(coef(mod1)["household_gend2"], 3)`, means that when the household is led by a female rather than a male the odds of a child being anaemic decreases by `r round(1-exp(coef(mod1)["household_gend2"]), 3)`.
+
+The pseudo R-squared is `r round(PseudoR2(mod1), 3)` which suggests that this model explains almost none of the overall variation in childhood anaemia. The low pseudo R-squared was expected for a baseline logistic regression, containing only one binary regressor, because childhood anaemia, as mentioned above, is shaped by a wide range of factors that need to be accounted for. 
+
+Model 2, which can be seen on **Table 3**, introduces a full set of socioeconomic, demographic, environmental and geographic controls to study the effect of household head gender on childhood anaemia when household characteristics are considered.
+
+The coefficient on the independent variable decreased and statistically insignificant (`r round(1-exp(coef(mod2)["household_gend2"]), 3)`).  This means that the initially observed relationship in Model 1 was substantially explained by other household characteristics and not by gender of the household head. 
+
+Interpreting all coefficients: 
+
+* All other things equal, each additional adult in the household increases the odds of childhood anaemia by `r round(exp(coef(mod2)["adults"])-1, 3)` (`r round((exp(coef(mod2)["adults"]) - 1) * 100, 1)`%). This is statistically significant at the 1% level.
+* All other things equal, each additional child under 5 in the household increases the odds of childhood anaemia by `r round(exp(coef(mod2)["children5"])-1, 3)` (`r round((exp(coef(mod2)["children5"]) - 1) * 100, 1)`%). This is statistically significant at the 1% level.
+* All other things equal, each additional month of child’s age decreases the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["children_age"]), 3)` (`r round((1 - exp(coef(mod2)["children_age"])) * 100, 1)`%). This is statistically significant at the 1% level.
+* All other things equal, moving 1 unit up the wealth index scale decreases the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["wealth_index_scaled"]), 3)` (`r round((1 - exp(coef(mod2)["wealth_index_scaled"])) * 100, 1)`%). This is statistically significant at the 1% level.
+* All other things equal, urban residence of the household increases the odds of childhood anaemia by `r round(exp(coef(mod2)["residence2"])-1, 3)` (`r round((exp(coef(mod2)["residence2"]) - 1) * 100, 1)`%). This is statistically significant at the 10% level.
+* All other things equal, mother’s completion of primary education level decreases the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["mother_edu1"]), 3)` (`r round((1 - exp(coef(mod2)["mother_edu1"])) * 100, 1)`%); mother’s completion of secondary education level decreases the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["mother_edu2"]), 3)` (`r round((1 - exp(coef(mod2)["mother_edu2"])) * 100, 1)`%); and mother’s completion of higher education level decreases the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["mother_edu3"]), 3)` (`r round((1 - exp(coef(mod2)["mother_edu3"])) * 100, 1)`%). These coefficients are statistically significant at the 1% level.
+* All other things equal, water presence at a handwashing place increases the odds of childhood anaemia by `r round(exp(coef(mod2)["water1"])-1, 3)` (`r round((exp(coef(mod2)["water1"]) - 1) * 100, 1)`%). This is statistically significant at the 10% level.
+* All other things equal, having a soap/detergent in the household decreases the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["soap1"]), 3)` (`r round((1 - exp(coef(mod2)["soap1"])) * 100, 1)`%). This is statistically significant at the 1% level. 
+* The coefficients on the regressors of cooking fuel types and ownership of the livestock are not statistically significant.
+* All other things equal, having children sleep under a mosquito net decreases the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["net1"]), 3)` (`r round((1 - exp(coef(mod2)["net1"])) * 100, 1)`%). This is statistically significant at the 1% level.
+* All other things equal, an additional meter in altitude increases the odds of childhood anaemia by `r round(exp(coef(mod2)["altitude"])-1, 5)` (`r round((exp(coef(mod2)["altitude"]) - 1) * 100, 3)`%). This is statistically significant at the 1% level.
+* All other things equal, households located in the Eastern states experience a decrease of the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["state_groupEast"]), 3)` (`r round((1 - exp(coef(mod2)["state_groupEast"])) * 100, 1)`%); households located in the Island Territories experience a decrease of the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["state_groupIsland Territories"]), 3)` (`r round((1 - exp(coef(mod2)["state_groupIsland Territories"])) * 100, 1)`%); households located in the Northern states experience an increase of the odds of childhood anaemia by `r round(exp(coef(mod2)["state_groupNorth"])-1, 3)` (`r round((exp(coef(mod2)["state_groupNorth"]) - 1) * 100, 1)`%); households located in the Northeastern states experience a decrease of the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["state_groupNortheast"]), 3)` (`r round((1 - exp(coef(mod2)["state_groupNortheast"])) * 100, 1)`%); households located in the Southern states experience a decrease of the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["state_groupSouth"]), 3)` (`r round((1 - exp(coef(mod2)["state_groupSouth"])) * 100, 1)`%); and households located in the Western states experience an increase of the odds of childhood anaemia by `r round(exp(coef(mod2)["state_groupWest"])-1, 3)` (`r round((exp(coef(mod2)["state_groupWest"]) - 1) * 100, 1)`%). These coefficients are statistically significant at the 1% level.
+* All other things equal, each additional year of the household head’s age decreases the odds of childhood anaemia by `r round(1 - exp(coef(mod2)["hh_age"]), 3)` (`r round((1 - exp(coef(mod2)["hh_age"])) * 100, 1)`%). This is statistically significant at the 1% level.
+
+The pseudo R-squared increased to `r round(PseudoR2(mod2), 3)`.
+
+```{r results='asis', echo=FALSE}
+stargazer(mod1, mod2,
+          type = "latex",
+          header = FALSE,
+          digits = 3,
+          font.size = "tiny")
+```
+
+\newpage
+
+# Alternative Specifications
+
+The third logit regression model where the interaction term of State group and the children sleeping under mosquito net was added. It is because some states show higher net use because they face greater mosquito exposure. Therefore, it helps us see the true effect of net use on anaemia while controlling for the fact that net use differs across regions due to geography. 
+
+## Regression Results
+
+```{r, echo=FALSE, include = FALSE}
+mod3 <- glm(anaemia ~ household_gend + adults + children5 + children_age + wealth_index_scaled + mother_edu + soap + net + altitude + state_group + hh_age + state_group*net,
+            data = data_clean_missing_dropped,
+            family = binomial(link="logit"))
+```
+
+```{r, echo=FALSE, include = FALSE}
+PseudoR2(mod3)
+```
+
+The third logit regression model was created by removing the control variables the coefficients of which were not statistically significant (namely, livestock owrnership and cooking fuel types) or did not contribute meaningfully to explaining variation in childhood anaemia (namely, water presence and residence type), as well as by adding the interaction term of State group and the children sleeping under mosquito net. 
+
+Pseudo R-squared in Model 3 (`r round(PseudoR2(mod3), 3)`) stayed the same as in the Model 2 (`r round(PseudoR2(mod2), 3)`). Therefore, it still does not greatly increase the model’s overall ability to explain childhood anaemia. However, the changes introduced in Model 3 provide a more precise interpretation of its effect on childhood anaemia. Specifically, it is important to notice that all other things equal, the coefficient on *housheold_gend2* remained small and statistically insignificant. This contrasts sharply with mother’s education, which remains one of the strongest and most consistent predictors of childhood anaemia in both Model 2 and Model 3. In Model 3: 
+
+* Primary education completed by the mother decreases the odds of child having an anaemia by `r round(1-exp(coef(mod3)["mother_edu1"]),3)` (`r round((1 - exp(coef(mod3)["mother_edu1"])) * 100, 1)`%);
+* Secondary education completed by the mother decreases the odds of child having an anaemia by `r round(1-exp(coef(mod3)["mother_edu2"]),3)` (`r round((1 - exp(coef(mod3)["mother_edu2"])) * 100, 1)`%);
+* Higher education completed by the mother decreases the odds of child having an anaemia by `r round(1-exp(coef(mod3)["mother_edu3"]),3)` (`r round((1 - exp(coef(mod3)["mother_edu3"])) * 100, 1)`%).
+
+Talking about the true protective impact of net use on childhood anaemia:
+
+* Compared to Central states (included as the baseline category) and all other things equal, in Eastern, Northeastern, Southern, and Western states, net use is less protective (positive interaction coefficients of `r round(coef(mod3)["net1:state_groupEast"], 3)`, `r round(coef(mod3)["net1:state_groupNortheast"], 3)`, `r round(coef(mod3)["net1:state_groupSouth"], 3)` and `r round(coef(mod3)["net1:state_groupWest"], 3)`, respectively). 
+
+* In Northern states, net use becomes slightly more protective (the odds of childhood anaemia decrease by `r round(1-exp(coef(mod3)["net1:state_groupNorth"]),3)`),  all other things equal. However, the interaction is not statistically significant.
+
+* In the Island Territories, the difference from the baseline region is small and not significant (coefficient is `r round(coef(mod3)["net1:state_groupIsland Territories"], 3)`).
+
+```{r results = 'asis', echo=FALSE, size="small"}
+stargazer(mod3,
+          type = "latex",
+          header = FALSE,
+          digits = 3,
+          font.size = "tiny")
+```
+
+\newpage
+
+# Robustness Checks
+
+**Original Data**
+```{r, include=FALSE}
+data$state <- as.factor(data$state)
+data$residence <- as.factor(data$residence)
+data$net_sleeping <- as.factor(data$net_sleeping)
+data$household_gend <- as.factor(data$household_gend)
+data$water <- as.factor(data$water)
+data$soap <- as.factor(data$soap)
+data$livestock <- as.factor(data$livestock)
+data$anaemia_lev_child <- as.factor(data$anaemia_lev_child)
+data$cooking_fuel <- as.factor(data$cooking_fuel)
+
+summary(data)
+table(data$state)
+summary(data_clean_missing_dropped)
+```
+India's population, according to Statista, was 1.407 billion in 2021. The sample size has to be large enough to account for the large population. Since the sample size decreased substantially after the data cleaning process significantly decreased from 2843917 to 168175 observations (due to many existing "NA" observations), the robustness check is crucial to ensure that the internal validity is not violated. When comparing summaries of the original dataset (*data*) and the cleaned dataset (*data_cleaning_missing_dropped*), apart from many NA values being successfully dropped, the next substantial differences are observed:
+
+1. Mean number of children under 5 increased from 0.6102 to 1.746. This is because households without young children were removed. This upward trend indicates a more targeted sample, which directly related to the research question, not an error in the data;
+
+2. For household head’s age (in years) variable, 1st Quartile decreased from 39 to 31, median decreased from 49 to 41 and mean decreased from 49.9 to 44.92. This shows that the final dataset includes more younger household heads, which was expected because the refined dataset focuses specifically on families with young children (under five), who are typically led by younger parents;
+
+3. For the children’s age (in months) variable, minimum increased from 0 to 6, 1st Quartile increased from 14 to 19, median increased from 30 to 33 and mean increased from 29.58 to 32.75. Since the full 6–59 month range is still present and the variable itself was not transformed, this change does not compromise internal validity;
+
+4. The scaling of the wealth index enhanced interpretability without affecting relationships among variables.
+
+For the other variables, any changes in their distributions were slight. These small differences occurred due to the removal of incomplete observations and grouping of some categories to make the data clearer. The core measurements were not altered and, therefore, the cleaned dataset does not impact the true meaning or interpretation of the variables. 
+
+# Discussion 
+
+## Main Findings
+
+From the regression model, it is apparent that once socioeconomic and environmental factors are controlled for, female-headed households do not have significantly different child anaemia outcomes compared with male-headed households. Therefore, this report **fails to reject the null hypothesis** ($H_0: \beta_1=0$) that household head gender has no meaningful association with childhood anaemia. However, maternal education appeared to be consistent and important predictor of childhood anaemia. 
+
+```{r, echo=FALSE, fig.width=7, fig.height=2, fig.align="center"}
+plot_data <- data_clean_missing_dropped %>%
+  group_by(mother_edu, household_gend, anaemia) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(mother_edu, household_gend) %>%
+  mutate(prop = n / sum(n)) %>%
+  filter(anaemia == 1)   # keep only anaemic proportion
+
+plot_data <- plot_data %>%
+  mutate(household_gend = recode(household_gend,
+                                 "1" = "Male-headed Household",
+                                 "2" = "Female-headed Household"))
+
+ggplot(plot_data, aes(x = mother_edu, y = prop,
+                      color = household_gend,
+                      group = household_gend)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("#4B6F8C", "#C97BB6")) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Childhood Anaemia Across Mother's Education Levels",
+    x = "Mother's Education Level",
+    y = "Childhood Anaemia Proportion",
+    color = "Household Head Gender"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+```
+The line graph shows that anaemia prevalence in children under the age of five declines sharply as the mother’s education level increases from no education (around) to primary (around) to secondary (around) and, finally, to the higher education (around). 
+
+**Note**: The female-headed households exhibit slightly lower anaemia prevalence at every education level. Nevertheless, it is small compared to the the declines of childhood anaemia in the households that is seen with higher maternal education.
+
+## Policy Interpretation 
+
+1. Strengthening girls’ access to secondary and higher education can provide long-term public health benefits. The government should focus on the improvement of **maternal education** as a strategy for **childhood anaemia reduction**;
+
+2. Since education seems to improve health behaviors, especially regarding nutrition, the **targeted community programs** for iron-rich diet awareness and hygiene workshops could replicate some mechanisms of formal education **among women who did not complete school**;
+
+3. Wealth being an important factor in the regression model associated with anaemia in children, it is vital to support poorer household with nutrition-focused policies such as **subsidized food packages**. 
+
+## Limitations
+
+1. Huge reduction in sample size after cleaning suggests that there may be a **selection bias**. For example, removed households may be poorer, differ significantly in nutrition decisions and education attained by the mother. Further research should focus on expanding the dataset;
+
+2. **Omitted variable bias** persists as the DHS does not capture the significant determinant of anaemia which is nutrition and its quality, specifically iron-richness of the food consumed. Although *livestock* variable tried to account for it, it may be a case when due to religious believes and/or profit purposes, family owes livestock but does not consume meat products needed; 
+
+3. Possible **measurement errors** because dataset relies on self-reported and observed data, especially for such variables as water and soap/detergent availability. This may not reflect long-term living conditions. 
+
+Because of these limitations our analysis cannot establish causality and can only identify correlations between household characteristics like mother’s highest attained education level and  anaemia for children under five in the household.
+
+\newpage
+
+# Bibliography
+
+Klu, Desmond, and Percival Delali Agordoh. "Sex of Household Head and Other Household Determinants of Childhood Anaemia Among Households in Ghana: Regression Analysis of the 2019 Malaria Indicator Survey." Journal of Health Population and Nutrition, vol. 41, no. 1, Oct. 2022, p. 46. https://doi.org/10.1186/s41043-022-00327-5. 
+
+Statista. “Total Population of India 2030.” Statista, 19 Nov. 2025, www.statista.com/statistics/263766/total-population-of-india.
+
+The DHS Program - India: Standard DHS, 2019-21 Dataset. dhsprogram.com/data/dataset/India_Standard-DHS_2020.cfm?flag=0.
+
+World Health Organization: WHO and World Health Organization: WHO. Anaemia. 10 Feb. 2025, www.who.int/news-room/fact-sheets/detail/anaemia. 
